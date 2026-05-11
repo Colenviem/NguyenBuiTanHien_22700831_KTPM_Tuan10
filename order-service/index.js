@@ -2,6 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import mariadb from 'mariadb';
+import { 
+  Policy, 
+  SamplingBreaker, 
+  CircuitBreakerPolicy, 
+  RetryPolicy, 
+  handleAll, 
+  ConsecutiveBreaker 
+} from 'cockatiel';
 
 const app = express();
 const PORT = 3003;
@@ -15,6 +23,20 @@ const dbConfig = {
   password: 'sapassword',
   port: 3306
 };
+
+// --- Resilience Policies (Node.js equivalent of Resilience4j) ---
+
+// 1. Retry Policy: Retry 3 times with exponential backoff
+const retry = Policy.handleAll().retry().attempts(3).exponential();
+
+// 2. Circuit Breaker Policy: 
+// Break if 5 consecutive failures occur, stay open for 10 seconds
+const circuitBreaker = Policy.handleAll().circuitBreaker(10000, new ConsecutiveBreaker(5));
+
+// Combine policies: Retry -> Circuit Breaker
+const resilience = Policy.wrap(retry, circuitBreaker);
+
+// ---------------------------------------------------------------
 
 let pool;
 
@@ -65,11 +87,12 @@ app.post('/api/orders', async (req, res) => {
   const { userId, items } = req.body;
 
   try {
-    const userRes = await axios.get(`http://localhost:3001/api/users`);
+    // Wrap inter-service calls with resilience policies
+    const userRes = await resilience.execute(() => axios.get(`http://localhost:3001/api/users`));
     const user = userRes.data.find(u => u.id === Number(userId));
     if (!user) return res.status(400).json({ message: 'Invalid user' });
 
-    const foodRes = await axios.get(`http://localhost:3002/api/foods`);
+    const foodRes = await resilience.execute(() => axios.get(`http://localhost:3002/api/foods`));
     const allFoods = foodRes.data;
     
     let total = 0;
@@ -95,6 +118,10 @@ app.post('/api/orders', async (req, res) => {
 
     res.status(201).json({ id: orderId, userId, username: user.username, total, status: 'Pending', items: itemsToProcess });
   } catch (error) {
+    if (error.name === 'BrokenCircuitError') {
+      return res.status(503).json({ message: 'User or Food service is currently unavailable (Circuit Breaker active)' });
+    }
+    console.error('Order creation error:', error.message);
     res.status(500).json({ message: error.message });
   }
 });
