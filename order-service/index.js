@@ -27,75 +27,72 @@ const dbConfig = {
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const FOOD_SERVICE_URL = process.env.FOOD_SERVICE_URL || 'http://localhost:3002';
 
-// --- Resilience Policies (Cockatiel v3 exact exports) ---
-
-// 1. Retry Policy
+// --- Resilience Policies ---
 const retryPolicy = retry(handleAll, { 
   maxAttempts: 3, 
   backoff: new ExponentialBackoff() 
 });
-
 retryPolicy.onRetry(() => console.log(`[Resilience] Retrying request...`));
 
-// 2. Circuit Breaker Policy
 const cbPolicy = circuitBreaker(handleAll, { 
   halfOpenAfter: 10000, 
   breaker: new ConsecutiveBreaker(5) 
 });
-
 cbPolicy.onBreak(() => console.warn('[Resilience] Circuit Breaker: OPEN (Tripped!)'));
 cbPolicy.onReset(() => console.info('[Resilience] Circuit Breaker: CLOSED (Reset)'));
 
-// Combine policies
 const resilience = wrap(retryPolicy, cbPolicy);
-
-// --------------------------------------------------
 
 let pool;
 
 async function initDB() {
-  try {
-    const conn = await mariadb.createConnection({
-      host: dbConfig.host,
-      user: dbConfig.user,
-      password: dbConfig.password,
-      port: dbConfig.port
-    });
-    await conn.query(`CREATE DATABASE IF NOT EXISTS order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await conn.query(`ALTER DATABASE order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await conn.end();
+  let connected = false;
+  while (!connected) {
+    try {
+      const conn = await mariadb.createConnection({
+        host: dbConfig.host,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        port: dbConfig.port
+      });
+      await conn.query(`CREATE DATABASE IF NOT EXISTS order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await conn.query(`ALTER DATABASE order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await conn.end();
 
-    pool = mariadb.createPool({ ...dbConfig, database: 'order_service_db', connectionLimit: 5 });
+      pool = mariadb.createPool({ ...dbConfig, database: 'order_service_db', connectionLimit: 5 });
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        userId INT NOT NULL,
-        username VARCHAR(255) NOT NULL,
-        total INT NOT NULL,
-        status VARCHAR(50) DEFAULT 'Pending',
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS orders (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          userId INT NOT NULL,
+          username VARCHAR(255) NOT NULL,
+          total INT NOT NULL,
+          status VARCHAR(50) DEFAULT 'Pending',
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+      `);
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS order_items (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        orderId INT NOT NULL,
-        foodId INT NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        quantity INT NOT NULL,
-        price INT NOT NULL,
-        FOREIGN KEY (orderId) REFERENCES orders(id) ON DELETE CASCADE
-      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS order_items (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          orderId INT NOT NULL,
+          foodId INT NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          quantity INT NOT NULL,
+          price INT NOT NULL,
+          FOREIGN KEY (orderId) REFERENCES orders(id) ON DELETE CASCADE
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+      `);
 
-    await pool.query(`ALTER TABLE orders CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await pool.query(`ALTER TABLE order_items CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await pool.query(`ALTER TABLE orders CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await pool.query(`ALTER TABLE order_items CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-    console.log(`Order Service Database initialized on ${dbConfig.host}`);
-  } catch (error) {
-    console.error('Order DB Error:', error.message);
+      console.log(`Order Service Database initialized on ${dbConfig.host}`);
+      connected = true;
+    } catch (error) {
+      console.error(`Order DB Connection failed (${error.message}). Retrying in 5s...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
 }
 

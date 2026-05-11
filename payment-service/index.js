@@ -21,32 +21,37 @@ const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:300
 let pool;
 
 async function initDB() {
-  try {
-    const conn = await mariadb.createConnection({
-      host: dbConfig.host,
-      user: dbConfig.user,
-      password: dbConfig.password,
-      port: dbConfig.port
-    });
-    await conn.query(`CREATE DATABASE IF NOT EXISTS payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await conn.query(`ALTER DATABASE payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    await conn.end();
+  let connected = false;
+  while (!connected) {
+    try {
+      const conn = await mariadb.createConnection({
+        host: dbConfig.host,
+        user: dbConfig.user,
+        password: dbConfig.password,
+        port: dbConfig.port
+      });
+      await conn.query(`CREATE DATABASE IF NOT EXISTS payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await conn.query(`ALTER DATABASE payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      await conn.end();
 
-    pool = mariadb.createPool({ ...dbConfig, database: 'payment_service_db', connectionLimit: 5 });
+      pool = mariadb.createPool({ ...dbConfig, database: 'payment_service_db', connectionLimit: 5 });
 
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS payments (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        orderId INT NOT NULL,
-        method VARCHAR(50),
-        status VARCHAR(50) DEFAULT 'Success',
-        createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
-    `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS payments (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          orderId INT NOT NULL,
+          method VARCHAR(50),
+          status VARCHAR(50) DEFAULT 'Success',
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+      `);
 
-    console.log(`Payment Service Database initialized on ${dbConfig.host}`);
-  } catch (error) {
-    console.error('Payment DB Error:', error.message);
+      console.log(`Payment Service Database initialized on ${dbConfig.host}`);
+      connected = true;
+    } catch (error) {
+      console.error(`Payment DB Connection failed (${error.message}). Retrying in 5s...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
 }
 

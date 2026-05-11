@@ -8,6 +8,11 @@ services:
       MYSQL_ROOT_PASSWORD: sapassword
     ports:
       - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-p sapassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - food-network
 
@@ -21,7 +26,8 @@ services:
       - DB_PASSWORD=sapassword
       - PORT=3001
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     networks:
       - food-network
 
@@ -35,7 +41,8 @@ services:
       - DB_PASSWORD=sapassword
       - PORT=3002
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     networks:
       - food-network
 
@@ -51,9 +58,8 @@ services:
       - USER_SERVICE_URL=http://user-service:3001
       - FOOD_SERVICE_URL=http://food-service:3002
     depends_on:
-      - mariadb
-      - user-service
-      - food-service
+      mariadb:
+        condition: service_healthy
     networks:
       - food-network
 
@@ -68,8 +74,8 @@ services:
       - PORT=3004
       - ORDER_SERVICE_URL=http://order-service:3003
     depends_on:
-      - mariadb
-      - order-service
+      mariadb:
+        condition: service_healthy
     networks:
       - food-network
 
