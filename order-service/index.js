@@ -3,8 +3,12 @@ import cors from 'cors';
 import axios from 'axios';
 import mariadb from 'mariadb';
 import { 
-  Policy, 
-  ConsecutiveBreaker 
+  handleAll, 
+  retry, 
+  circuitBreaker, 
+  ExponentialBackoff, 
+  ConsecutiveBreaker,
+  wrap
 } from 'cockatiel';
 
 const app = express();
@@ -23,16 +27,29 @@ const dbConfig = {
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const FOOD_SERVICE_URL = process.env.FOOD_SERVICE_URL || 'http://localhost:3002';
 
-// Resilience Policies
-const retry = Policy.handleAll().retry().attempts(3).exponential();
-retry.onRetry(reason => console.log(`[Resilience] Retrying request due to: ${reason.reason.message}`));
+// --- Resilience Policies (Cockatiel v3 exact exports) ---
 
-const circuitBreaker = Policy.handleAll().circuitBreaker(10000, new ConsecutiveBreaker(5));
-circuitBreaker.onBreak(() => console.warn('[Resilience] Circuit Breaker: OPEN (Tripped!)'));
-circuitBreaker.onReset(() => console.info('[Resilience] Circuit Breaker: CLOSED (Reset)'));
-circuitBreaker.onHalfOpen(() => console.info('[Resilience] Circuit Breaker: HALF-OPEN (Testing...)'));
+// 1. Retry Policy
+const retryPolicy = retry(handleAll, { 
+  maxAttempts: 3, 
+  backoff: new ExponentialBackoff() 
+});
 
-const resilience = Policy.wrap(retry, circuitBreaker);
+retryPolicy.onRetry(() => console.log(`[Resilience] Retrying request...`));
+
+// 2. Circuit Breaker Policy
+const cbPolicy = circuitBreaker(handleAll, { 
+  halfOpenAfter: 10000, 
+  breaker: new ConsecutiveBreaker(5) 
+});
+
+cbPolicy.onBreak(() => console.warn('[Resilience] Circuit Breaker: OPEN (Tripped!)'));
+cbPolicy.onReset(() => console.info('[Resilience] Circuit Breaker: CLOSED (Reset)'));
+
+// Combine policies
+const resilience = wrap(retryPolicy, cbPolicy);
+
+// --------------------------------------------------
 
 let pool;
 
