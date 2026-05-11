@@ -3,23 +3,28 @@ import cors from 'cors';
 import mariadb from 'mariadb';
 
 const app = express();
-const PORT = 3002;
+const PORT = process.env.PORT || 3002;
 
 app.use(cors());
 app.use(express.json());
 
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'sapassword',
-  port: 3306
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'sapassword',
+  port: parseInt(process.env.DB_PORT || '3306')
 };
 
 let pool;
 
 async function initDB() {
   try {
-    const conn = await mariadb.createConnection(dbConfig);
+    const conn = await mariadb.createConnection({
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      port: dbConfig.port
+    });
     await conn.query(`CREATE DATABASE IF NOT EXISTS food_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.query(`ALTER DATABASE food_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.end();
@@ -35,8 +40,7 @@ async function initDB() {
         description TEXT
       ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
-
-    // Ensure existing table is UTF-8
+    
     await pool.query(`ALTER TABLE foods CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
     const rows = await pool.query('SELECT * FROM foods');
@@ -52,7 +56,7 @@ async function initDB() {
       }
     }
 
-    console.log('Food Service Database initialized (MariaDB)');
+    console.log(`Food Service Database initialized on ${dbConfig.host}`);
   } catch (error) {
     console.error('Food DB Error:', error.message);
   }

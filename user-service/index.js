@@ -3,24 +3,30 @@ import cors from 'cors';
 import mariadb from 'mariadb';
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
 
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'sapassword',
-  port: 3306
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'sapassword',
+  port: parseInt(process.env.DB_PORT || '3306')
 };
 
 let pool;
 
 async function initDB() {
   try {
-    const conn = await mariadb.createConnection(dbConfig);
+    const conn = await mariadb.createConnection({
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      port: dbConfig.port
+    });
     await conn.query(`CREATE DATABASE IF NOT EXISTS user_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await conn.query(`ALTER DATABASE user_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.end();
 
     pool = mariadb.createPool({ ...dbConfig, database: 'user_service_db', connectionLimit: 5 });
@@ -40,7 +46,7 @@ async function initDB() {
       await pool.query('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', ['user', 'user', 'USER']);
     }
 
-    console.log('User Service Database initialized (MariaDB)');
+    console.log(`User Service Database initialized on ${dbConfig.host}`);
   } catch (error) {
     console.error('User DB Error:', error.message);
   }

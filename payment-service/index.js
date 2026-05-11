@@ -4,24 +4,32 @@ import axios from 'axios';
 import mariadb from 'mariadb';
 
 const app = express();
-const PORT = 3004;
+const PORT = process.env.PORT || 3004;
 
 app.use(cors());
 app.use(express.json());
 
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'sapassword',
-  port: 3306
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'sapassword',
+  port: parseInt(process.env.DB_PORT || '3306')
 };
+
+const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://localhost:3003';
 
 let pool;
 
 async function initDB() {
   try {
-    const conn = await mariadb.createConnection(dbConfig);
-    await conn.query(`CREATE DATABASE IF NOT EXISTS payment_service_db`);
+    const conn = await mariadb.createConnection({
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      port: dbConfig.port
+    });
+    await conn.query(`CREATE DATABASE IF NOT EXISTS payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await conn.query(`ALTER DATABASE payment_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.end();
 
     pool = mariadb.createPool({ ...dbConfig, database: 'payment_service_db', connectionLimit: 5 });
@@ -33,10 +41,10 @@ async function initDB() {
         method VARCHAR(50),
         status VARCHAR(50) DEFAULT 'Success',
         createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
+      ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
     `);
 
-    console.log('Payment Service Database initialized (MariaDB)');
+    console.log(`Payment Service Database initialized on ${dbConfig.host}`);
   } catch (error) {
     console.error('Payment DB Error:', error.message);
   }
@@ -50,7 +58,7 @@ app.post('/api/payments', async (req, res) => {
   try {
     await pool.query('INSERT INTO payments (orderId, method) VALUES (?, ?)', [orderId, method]);
     
-    const orderRes = await axios.patch(`http://localhost:3003/api/orders/${orderId}/status`, {
+    const orderRes = await axios.patch(`${ORDER_SERVICE_URL}/api/orders/${orderId}/status`, {
       status: 'Paid'
     });
     const order = orderRes.data;

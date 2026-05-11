@@ -4,45 +4,46 @@ import axios from 'axios';
 import mariadb from 'mariadb';
 import { 
   Policy, 
-  SamplingBreaker, 
-  CircuitBreakerPolicy, 
-  RetryPolicy, 
-  handleAll, 
   ConsecutiveBreaker 
 } from 'cockatiel';
 
 const app = express();
-const PORT = 3003;
+const PORT = process.env.PORT || 3003;
 
 app.use(cors());
 app.use(express.json());
 
 const dbConfig = {
-  host: 'localhost',
-  user: 'root',
-  password: 'sapassword',
-  port: 3306
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'sapassword',
+  port: parseInt(process.env.DB_PORT || '3306')
 };
 
-// --- Resilience Policies (Node.js equivalent of Resilience4j) ---
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
+const FOOD_SERVICE_URL = process.env.FOOD_SERVICE_URL || 'http://localhost:3002';
 
-// 1. Retry Policy: Retry 3 times with exponential backoff
+// Resilience Policies
 const retry = Policy.handleAll().retry().attempts(3).exponential();
+retry.onRetry(reason => console.log(`[Resilience] Retrying request due to: ${reason.reason.message}`));
 
-// 2. Circuit Breaker Policy: 
-// Break if 5 consecutive failures occur, stay open for 10 seconds
 const circuitBreaker = Policy.handleAll().circuitBreaker(10000, new ConsecutiveBreaker(5));
+circuitBreaker.onBreak(() => console.warn('[Resilience] Circuit Breaker: OPEN (Tripped!)'));
+circuitBreaker.onReset(() => console.info('[Resilience] Circuit Breaker: CLOSED (Reset)'));
+circuitBreaker.onHalfOpen(() => console.info('[Resilience] Circuit Breaker: HALF-OPEN (Testing...)'));
 
-// Combine policies: Retry -> Circuit Breaker
 const resilience = Policy.wrap(retry, circuitBreaker);
-
-// ---------------------------------------------------------------
 
 let pool;
 
 async function initDB() {
   try {
-    const conn = await mariadb.createConnection(dbConfig);
+    const conn = await mariadb.createConnection({
+      host: dbConfig.host,
+      user: dbConfig.user,
+      password: dbConfig.password,
+      port: dbConfig.port
+    });
     await conn.query(`CREATE DATABASE IF NOT EXISTS order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.query(`ALTER DATABASE order_service_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await conn.end();
@@ -75,7 +76,7 @@ async function initDB() {
     await pool.query(`ALTER TABLE orders CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     await pool.query(`ALTER TABLE order_items CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 
-    console.log('Order Service Database initialized (MariaDB)');
+    console.log(`Order Service Database initialized on ${dbConfig.host}`);
   } catch (error) {
     console.error('Order DB Error:', error.message);
   }
@@ -87,12 +88,11 @@ app.post('/api/orders', async (req, res) => {
   const { userId, items } = req.body;
 
   try {
-    // Wrap inter-service calls with resilience policies
-    const userRes = await resilience.execute(() => axios.get(`http://localhost:3001/api/users`));
+    const userRes = await resilience.execute(() => axios.get(`${USER_SERVICE_URL}/api/users`));
     const user = userRes.data.find(u => u.id === Number(userId));
     if (!user) return res.status(400).json({ message: 'Invalid user' });
 
-    const foodRes = await resilience.execute(() => axios.get(`http://localhost:3002/api/foods`));
+    const foodRes = await resilience.execute(() => axios.get(`${FOOD_SERVICE_URL}/api/foods`));
     const allFoods = foodRes.data;
     
     let total = 0;
@@ -121,7 +121,6 @@ app.post('/api/orders', async (req, res) => {
     if (error.name === 'BrokenCircuitError') {
       return res.status(503).json({ message: 'User or Food service is currently unavailable (Circuit Breaker active)' });
     }
-    console.error('Order creation error:', error.message);
     res.status(500).json({ message: error.message });
   }
 });
@@ -136,7 +135,7 @@ app.get('/api/orders', async (req, res) => {
       enrichedOrders.push({
         ...order,
         id: Number(order.id),
-        items: items.map(item => ({...item, id: Number(item.id), orderId: Number(item.orderId)}))
+        items: items.map(item => ({ ...item, id: Number(item.id), orderId: Number(item.orderId) }))
       });
     }
     

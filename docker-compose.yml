@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:latest
+    container_name: food_db
+    environment:
+      MYSQL_ROOT_PASSWORD: sapassword
+    ports:
+      - "3306:3306"
+    networks:
+      - food-network
+
+  user-service:
+    build: ./user-service
+    container_name: user-service
+    ports:
+      - "3001:3001"
+    environment:
+      - DB_HOST=mariadb
+      - DB_PASSWORD=sapassword
+      - PORT=3001
+    depends_on:
+      - mariadb
+    networks:
+      - food-network
+
+  food-service:
+    build: ./food-service
+    container_name: food-service
+    ports:
+      - "3002:3002"
+    environment:
+      - DB_HOST=mariadb
+      - DB_PASSWORD=sapassword
+      - PORT=3002
+    depends_on:
+      - mariadb
+    networks:
+      - food-network
+
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    ports:
+      - "3003:3003"
+    environment:
+      - DB_HOST=mariadb
+      - DB_PASSWORD=sapassword
+      - PORT=3003
+      - USER_SERVICE_URL=http://user-service:3001
+      - FOOD_SERVICE_URL=http://food-service:3002
+    depends_on:
+      - mariadb
+      - user-service
+      - food-service
+    networks:
+      - food-network
+
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    ports:
+      - "3004:3004"
+    environment:
+      - DB_HOST=mariadb
+      - DB_PASSWORD=sapassword
+      - PORT=3004
+      - ORDER_SERVICE_URL=http://order-service:3003
+    depends_on:
+      - mariadb
+      - order-service
+    networks:
+      - food-network
+
+  frontend:
+    build: ./frontend
+    container_name: frontend-ui
+    ports:
+      - "3000:80"
+    depends_on:
+      - user-service
+      - food-service
+      - order-service
+      - payment-service
+    networks:
+      - food-network
+
+networks:
+  food-network:
+    driver: bridge
